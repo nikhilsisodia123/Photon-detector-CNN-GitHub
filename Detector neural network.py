@@ -1,6 +1,11 @@
 import numpy as np
 from scipy import integrate
 import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras import layers, models, optimizers, callbacks, regularizers
+from sklearn.model_selection import train_test_split
+from contextlib import redirect_stdout
+
 
 def training_set(L=1, Lw=1, n=16, m=16, Sx=10, Sy=10, Amp=1, sigma=1): 
     # L/Lw = pixel length/width, n/m = amount of pixels lengthwise/widthwise, Sx/Sy = amount of pixels in one pixel
@@ -10,8 +15,6 @@ def training_set(L=1, Lw=1, n=16, m=16, Sx=10, Sy=10, Amp=1, sigma=1):
     gridx, gridstepx = np.linspace(-(L*(n-1)), L*n, 2*n, retstep = True)
     gridy, gridstepy = np.linspace(-(Lw*(m-1)), Lw*m, 2*m, retstep = True)
     print(gridx)
-
-    strip = np.linspace(0, -(Lw*(m-1)), m) #0 to L lengthwise
 
     #centres
     centrex, xstep = np.linspace(0,L,Sx+1, retstep = True)
@@ -24,11 +27,8 @@ def training_set(L=1, Lw=1, n=16, m=16, Sx=10, Sy=10, Amp=1, sigma=1):
     GRIDX=2*n-1
     GRIDY=2*m-1
     GRID = np.zeros((Sy,Sx, GRIDY, GRIDX))
-    STRIP = np.zeros((GRIDY))
 
     #creating centre coordinate data for each reading grid (functions as labels). coord in (x,y) format
-    XY = np.meshgrid(centrey, centrex) 
-    coord_grid = np.array(XY).transpose()
     labels = np.zeros((m*n,Sx,Sy, 2))
     number = 0
     for i in range(m-1, -1, -1):
@@ -71,60 +71,41 @@ def training_set(L=1, Lw=1, n=16, m=16, Sx=10, Sy=10, Amp=1, sigma=1):
             counter += 1
     return reading, labels
 
-reading, labels = training_set(Sx=20, Sy=20)
-#plt.imshow(reading[0][0]) #first index is for the square which will contain centres (reading[0] will be the top right)
-                          #square. The second index is for the centre for which the gaussian is distributed. Specifying
-                          #the first and second index will give the 2D detector array for a certain square and a certain
-                          #centre in that square. The centres are given rowise in terms of index so the 15th centre
-                          #for a pixel is the 2nd column and 5th row of the grid of centres in a pixel.
+def data_augmentation():   
+    global training_2        #Quick fix for now. Change into proper function and use it 
+    global labels_2
+    gain = np.random.normal(1, 0.05, (10,16,16)) 
+    training = np.zeros((np.shape(gain)[0]*np.shape(np.reshape(reading, (Sx*Sy*m*n, m, n)))[0], 16, 16))
+    counter = 0
+    for i in range(np.shape(gain)[0]):    
+        for j in range(np.shape(np.reshape(reading, (Sx*Sy*m*n, m, n)))[0]):
+            #training[counter] = np.multiply(np.reshape(reading, (Sx*Sy*m*n, m, n))[j], gain[i])
+            training[counter] = np.multiply(np.reshape(reading, (Sx*Sy*m*n, m, n))[j], np.random.normal(16,16))
+            counter += 1
+            
+    
+    training_2 = np.concatenate((np.reshape(reading, (Sx*Sy*m*n, m, n)), training), axis=0)
+    labels_2 = np.reshape(labels, (Sx*Sy*m*n, 2))
+    labels_2 = np.tile(labels_2, (11, 1))
+    
+def data_prep():
+    global training_final
+    global labels_final
+    global x_valid
+    global y_valid
+    data = np.reshape(training_2, (np.shape(training_2)[0], m, n, 1))
+    training_final, x_valid, labels_final, y_valid = train_test_split(data, labels_2, test_size=0.2, shuffle= True)
+    print(np.shape(training_final))
+    print(np.shape(x_valid))
 
-
-
-plt.imshow(np.flipud(reading[34][0][0]),origin = "lower")
-print(labels[34][5][5])
-######################################
-
-
-#Gaussian calibration gain filter
-import numpy as np
-Sx = 20
-Sy = 20
-m = 16
-n = 16
-
-#Below code looks sus
-gain = np.random.normal(1, 0.05, (10,16,16)) #why 10 and not 100? Have changed 10 to 100
-training = np.zeros((np.shape(gain)[0]*np.shape(np.reshape(reading, (Sx*Sy*m*n, m, n)))[0], 16, 16))
-counter = 0
-for i in range(np.shape(gain)[0]):    
-    for j in range(np.shape(np.reshape(reading, (Sx*Sy*m*n, m, n)))[0]):
-        #training[counter] = np.multiply(np.reshape(reading, (Sx*Sy*m*n, m, n))[j], gain[i])
-        training[counter] = np.multiply(np.reshape(reading, (Sx*Sy*m*n, m, n))[j], np.random.normal(16,16))
-        counter += 1
+    print(len(tf.config.list_physical_devices("GPU")))
+    with tf.device("/cpu:0"):
+        training_final = tf.convert_to_tensor(training_final, np.float32)
+        x_valid = tf.convert_to_tensor(x_valid, np.float32)
+        labels_final = tf.convert_to_tensor(labels_final, np.float32)
+        y_valid = tf.convert_to_tensor(y_valid, np.float32)
         
-print(np.shape(training))
-training_2 = np.concatenate((np.reshape(reading, (Sx*Sy*m*n, m, n)), training), axis=0)
-print(np.shape(training_2))
-labels_2 = np.reshape(labels, (Sx*Sy*m*n, 2))
-labels_2 = np.tile(labels_2, (11, 1))
-print(np.shape(labels_2))
-
-
-
-#ML model
-import tensorflow as tf
-from tensorflow.keras import layers, models, optimizers, callbacks, regularizers
-from sklearn.model_selection import train_test_split
-from contextlib import redirect_stdout
-
-data = np.reshape(training_2, (np.shape(training_2)[0], m, n, 1))
-training_final, x_valid, labels_final, y_valid = train_test_split(data, labels_2, test_size=0.2, shuffle= True)
-print(np.shape(training_final))
-print(np.shape(x_valid))
-
-print(len(tf.config.list_physical_devices("GPU")))
-
-def neural(training, label, epochs, val_x, val_y, batch, save_as = "new", n=16, m=16, Sx=10, Sy=10, l1=10, l2=0, l3=0, l4=0):
+def neural(training, label, epochs, val_x, val_y, batch, save_as = "new", n=16, m=16, l1=10, l2=0, l3=0, l4=0):
     
         model = models.Sequential()
         model.add(layers.Conv2D(32, (2,2), activation = 'relu', input_shape = (m, n, 1)))
@@ -138,12 +119,6 @@ def neural(training, label, epochs, val_x, val_y, batch, save_as = "new", n=16, 
         model.add(layers.Dense(l2, activation = 'relu'))
         #model.add(layers.Dense(l3, activation = 'relu'))
         #model.add(layers.Dense(l4, activation = 'relu'))
-        #model.add(layers.Dense(128, activation = 'relu'))
-        #model.add(layers.Dense(0, activation = 'relu'))
-        #model.add(layers.Dense(64, activation = 'relu'))
-        #model.add(layers.Dense(16, activation = 'relu'))
-        #model.add(layers.Dense(64, activation = 'relu'))
-        #model.add(layers.Dropout(0.2, (64,)))
         model.add(layers.Dense(2))
 
 
@@ -167,15 +142,9 @@ def neural(training, label, epochs, val_x, val_y, batch, save_as = "new", n=16, 
         with open(save_as +'.txt', 'w') as f:
             with redirect_stdout(f):
                 model.summary()
-
-#neural(training = reading, label = labels, epochs = 1, val_x = x_valid, val_y = y_valid, batch = 100, Sx=20, Sy=20)
-i=20
-j=20
-neural(Sx=20, Sy=20, training = reading, label = labels, epochs = 30, val_x = x_valid, val_y = y_valid, batch = 50, save_as = str(i) +"_"+ str(j), l1 = i, l2=j)
-
-
+                
 #Testing model with individual data
-def predictor(centrex = 8, centrey = 8, A=1, s=1):
+def predictor(model, centrex = 8, centrey = 8, A=1, s=1): #Put model file path in model argument
 #A is amplitude and s is standard deviation (sigma)    
 
     AllData = []
@@ -194,50 +163,46 @@ def predictor(centrex = 8, centrey = 8, A=1, s=1):
 
     AllData = np.reshape(np.asarray(AllData), (1,16,16,1))
 
-    model = tf.keras.models.load_model("new.model")
+    model = tf.keras.models.load_model(model)
     prediction = model.predict(AllData)
     return prediction
 
-print(predictor(centrex = 7.15, centrey = 7.15))
+Sx = 20
+Sy = 20
+m = 16
+n = 16
+
+reading, labels = training_set(Sx=Sx, Sy=Sy, m=m, n=n)
+#plt.imshow(reading[0][0]) #first index is for the square which will contain centres (reading[0] will be the top right)
+                          #square. The second index is for the centre for which the gaussian is distributed. Specifying
+                          #the first and second index will give the 2D detector array for a certain square and a certain
+                          #centre in that square. The centres are given rowise in terms of index so the 15th centre
+                          #for a pixel is the 2nd column and 5th row of the grid of centres in a pixel.
 
 
-import multiprocessing as mp
-print(mp.cpu_count())
+
+plt.imshow(np.flipud(reading[34][0][0]),origin = "lower")
+print(labels[34][5][5])
+######################################
+
+
+#Gaussian calibration gain filter
+data_augmentation()
+
+#ML model
+data_prep()
+i=20
+j=20
+neural(training = reading, label = labels, epochs = 30, val_x = x_valid, val_y = y_valid, batch = 50, save_as = str(i) +"_"+ str(j), l1 = i, l2=j)
+print(predictor("20_20.model",centrex = 7.15, centrey = 7.15))
 ########################################
 
 #Testing model with individual data
-def predictor(centrey = 8, centrex = 8, A=1, s=1):
-#A is amplitude and s is standard deviation (sigma)    
-
-    AllData = []
-    gaussian = lambda x, y : A * np.exp(-0.5 * (np.square(x-centrex)+np.square(y-centrey))/np.square(s))
-    x1 = np.linspace(0, 16, 16 + 1)
-    y = np.linspace(0, 16, 16 + 1)
-    pixarray = []
-    for i in range(0, 16):
-        pixrow = []
-        for j in range(0, 16):
-            pixval = integrate.dblquad(gaussian, y[i] , y[i+1], lambda x: x1[j], lambda x: x1[j+1])
-            pixrow.append(pixval[0])
-        pixarray.insert(0, pixrow)
-    AllData.append(pixarray)
-
-
-    AllData = np.reshape(np.asarray(AllData), (1,16,16,1))
-
-    model = tf.keras.models.load_model("20_20.model")
-    prediction = model.predict(AllData)
-    return prediction
-
-print(predictor(centrex = 8.15, centrey = 8.15))
+print(predictor("20_20.model", centrey = 10.52, centrex = 10.32))
 ######################################
 
 for i in range(0,17):
     for j in range(0,17):
-        result = predictor(centrex=j, centrey=i)
+        result = predictor("20_20.model", centrey=i, centrex=j)
         print([(result[0][0]-i, result[0][1]-j)])
-
-
-
-
-
+        
